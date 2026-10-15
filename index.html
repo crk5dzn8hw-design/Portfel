@@ -1,1 +1,197 @@
+<!DOCTYPE html>
+<html lang="pl" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VaultHD - Multi-Address Crypto Wallet</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.1/ethers.umd.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#0f172a',
+                        cardbg: '#1e293b',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-darkbg text-slate-100 min-h-screen font-sans antialiased p-4">
+    <div class="max-w-4xl mx-auto space-y-6">
+        <header class="flex justify-between items-center border-b border-slate-700 pb-4">
+            <div>
+                <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">VaultHD</h1>
+                <p class="text-xs text-slate-400">Bezpieczny Portfel HD (50 adresów z 1 Seeda)</p>
+            </div>
+            <div class="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs rounded-full font-medium">
+                Ethereum Mainnet
+            </div>
+        </header>
+
+        <!-- Ekran startowy / Generator -->
+        <div id="setup-section" class="bg-cardbg rounded-2xl p-6 shadow-xl border border-slate-700/50 space-y-4">
+            <h2 class="text-lg font-semibold text-slate-200">Konfiguracja Portfela</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button onclick="generateNewWallet()" class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl transition shadow-lg shadow-blue-600/20">
+                    Generuj Nowy Seed (12 słów)
+                </button>
+                <div class="flex gap-2">
+                    <input type="text" id="import-seed-input" placeholder="Wpisz istniejącą frazę seed..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500">
+                    <button onclick="importWallet()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-xl transition text-sm">
+                        Importuj
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Główny panel portfela -->
+        <div id="wallet-section" class="hidden space-y-6">
+            <div class="bg-cardbg rounded-2xl p-4 shadow-xl border border-slate-700/50 flex justify-between items-center">
+                <div>
+                    <span class="text-xs text-slate-400 uppercase tracking-wider">Fraza Seed</span>
+                    <p id="display-mnemonic" class="font-mono text-sm text-amber-400 select-all"></p>
+                </div>
+                <button onclick="lockWallet()" class="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs rounded-lg transition">
+                    Wyloguj / Wyczyść
+                </button>
+            </div>
+
+            <div class="bg-cardbg rounded-2xl p-6 shadow-xl border border-slate-700/50 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-md font-semibold text-slate-200">Wygenerowane Adresy (50)</h3>
+                    <input type="text" id="search-address" oninput="filterAddresses()" placeholder="Szukaj adresu..." class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500">
+                </div>
+                <div class="overflow-x-auto max-h-96 overflow-y-auto pr-2">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-700 text-slate-400">
+                                <th class="py-2 px-3">Indeks</th>
+                                <th class="py-2 px-3">Ścieżka BIP44</th>
+                                <th class="py-2 px-3">Adres Publiczny</th>
+                                <th class="py-2 px-3 text-right">Akcje</th>
+                            </tr>
+                        </thead>
+                        <tbody id="addresses-table-body" class="divide-y divide-slate-800 font-mono"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="pk-modal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-cardbg border border-slate-700 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+            <h3 class="text-lg font-bold text-red-400">Poufny Klucz Prywatny</h3>
+            <p class="text-xs text-slate-400">Nigdy nikomu nie udostępniaj poniższego klucza prywatnego!</p>
+            <div id="modal-pk-content" class="bg-slate-900 p-3 rounded-xl font-mono text-xs text-amber-300 break-all select-all border border-slate-800"></div>
+            <button onclick="closeModal()" class="w-full py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm transition">Zamknij</button>
+        </div>
+    </div>
+
+    <script>
+        let currentWalletData = [];
+
+        function generateNewWallet() {
+            const wallet = ethers.Wallet.createRandom();
+            loadWalletFromMnemonic(wallet.mnemonic.phrase);
+        }
+
+        function importWallet() {
+            const phrase = document.getElementById('import-seed-input').value.trim();
+            if (!phrase) {
+                alert('Wprowadź poprawną frazę seed!');
+                return;
+            }
+            try {
+                loadWalletFromMnemonic(phrase);
+            } catch (e) {
+                alert('Błąd: Nieprawidłowa fraza seed.');
+            }
+        }
+
+        function loadWalletFromMnemonic(mnemonic) {
+            document.getElementById('display-mnemonic').innerText = mnemonic;
+            document.getElementById('setup-section').classList.add('hidden');
+            document.getElementById('wallet-section').classList.remove('hidden');
+
+            const tbody = document.getElementById('addresses-table-body');
+            tbody.innerHTML = '';
+            currentWalletData = [];
+
+            for (let i = 0; i < 50; i++) {
+                const path = `m/44'/60'/0'/0/${i}`;
+                const hdNode = ethers.HDNodeWallet.fromPhrase(mnemonic, undefined, path);
+                
+                currentWalletData.push({
+                    index: i,
+                    path: path,
+                    address: hdNode.address,
+                    privateKey: hdNode.privateKey
+                });
+
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-800/50 transition';
+                tr.innerHTML = `
+                    <td class="py-2.5 px-3 text-slate-400">#${i}</td>
+                    <td class="py-2.5 px-3 text-slate-500">${path}</td>
+                    <td class="py-2.5 px-3 text-slate-200">${hdNode.address}</td>
+                    <td class="py-2.5 px-3 text-right space-x-2">
+                        <button onclick="copyText('${hdNode.address}')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-blue-400 rounded transition text-xs">Kopiuj</button>
+                        <button onclick="showPK('${hdNode.privateKey}')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded transition text-xs">Klucz</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            }
+        }
+
+        function filterAddresses() {
+            const query = document.getElementById('search-address').value.toLowerCase();
+            const tbody = document.getElementById('addresses-table-body');
+            tbody.innerHTML = '';
+
+            const filtered = currentWalletData.filter(item => 
+                item.address.toLowerCase().includes(query) || item.index.toString().includes(query)
+            );
+
+            filtered.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-800/50 transition';
+                tr.innerHTML = `
+                    <td class="py-2.5 px-3 text-slate-400">#${item.index}</td>
+                    <td class="py-2.5 px-3 text-slate-500">${item.path}</td>
+                    <td class="py-2.5 px-3 text-slate-200">${item.address}</td>
+                    <td class="py-2.5 px-3 text-right space-x-2">
+                        <button onclick="copyText('${item.address}')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-blue-400 rounded transition text-xs">Kopiuj</button>
+                        <button onclick="showPK('${item.privateKey}')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded transition text-xs">Klucz</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function copyText(text) {
+            navigator.clipboard.writeText(text);
+            alert('Skopiowano do schowka!');
+        }
+
+        function showPK(pk) {
+            document.getElementById('modal-pk-content').innerText = pk;
+            document.getElementById('pk-modal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('pk-modal').classList.add('hidden');
+        }
+
+        function lockWallet() {
+            document.getElementById('wallet-section').classList.add('hidden');
+            document.getElementById('setup-section').classList.remove('hidden');
+            document.getElementById('display-mnemonic').innerText = '';
+        }
+    </script>
+</body>
+</html>
 
